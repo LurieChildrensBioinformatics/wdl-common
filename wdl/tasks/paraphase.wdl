@@ -38,6 +38,9 @@ task paraphase {
     vcfs_tar: {
       name: "Paraphase VCFs tar"
     }
+    msg: {
+      name: "Messages"
+    }
   }
 
   input {
@@ -53,11 +56,13 @@ task paraphase {
   }
 
   Int threads   = 8
-  Int mem_gb    = threads * 2
+  Int mem_gb    = 16
   Int disk_size = ceil(size(aligned_bam, "GB") +size(ref_fasta, "GB") + 20)
 
   command <<<
-    set -euo pipefail
+    set -eu
+
+    touch messages.txt
 
     paraphase --version
 
@@ -65,7 +70,8 @@ task paraphase {
       --threads ~{threads} \
       --bam ~{aligned_bam} \
       --reference ~{ref_fasta} \
-      --out ./
+      --out ./ \
+      || echo "Paraphase failed for sample ~{sample_id}.  Check Paraphase logs for details." >> messages.txt
 
     # tarball the VCFs if they exist
     if ls ~{sample_id}_paraphase_vcfs/*.vcf &> /dev/null; then
@@ -74,21 +80,23 @@ task paraphase {
   >>>
 
   output {
-    File  out_json  = "~{sample_id}.paraphase.json"
-    File  bam       = "~{sample_id}.paraphase.bam"
-    File  bam_index = "~{sample_id}.paraphase.bam.bai"
-    File? vcfs_tar  = "~{sample_id}.paraphase_vcfs.tar.gz"
+    File? out_json    = "~{sample_id}.paraphase.json"
+    File? bam         = "~{sample_id}.paraphase.bam"
+    File? bam_index   = "~{sample_id}.paraphase.bam.bai"
+    File? vcfs_tar    = "~{sample_id}.paraphase_vcfs.tar.gz"
+    Array[String] msg = read_lines("messages.txt")
   }
 
   runtime {
-    docker: "~{runtime_attributes.container_registry}/paraphase@sha256:a114ac5b9a682d7dc0fdf25c92cfb36f80c07ab4f1fb76b2e58092521b123a4d"
+    docker: "~{runtime_attributes.container_registry}/paraphase@sha256:e2f904111a43e8f055681112294e0f05ff2839d9801fc01ac39a17c841016920"
     cpu: threads
-    memory: mem_gb + " GB"
+    memory: mem_gb + " GiB"
     disk: disk_size + " GB"
     disks: "local-disk " + disk_size + " HDD"
     preemptible: runtime_attributes.preemptible_tries
     maxRetries: runtime_attributes.max_retries
     awsBatchRetryAttempts: runtime_attributes.max_retries  # !UnknownRuntimeKey
     zones: runtime_attributes.zones
+    cpuPlatform: runtime_attributes.cpuPlatform
   }
 }

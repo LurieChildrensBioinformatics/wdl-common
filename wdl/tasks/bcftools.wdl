@@ -219,13 +219,14 @@ task bcftools_stats_roh_small_variants {
   runtime {
     docker: "~{runtime_attributes.container_registry}/pb_wdl_base@sha256:4b889a1f21a6a7fecf18820613cf610103966a93218de772caba126ab70a8e87"
     cpu: threads
-    memory: mem_gb + " GB"
+    memory: mem_gb + " GiB"
     disk: disk_size + " GB"
     disks: "local-disk " + disk_size + " HDD"
     preemptible: runtime_attributes.preemptible_tries
     maxRetries: runtime_attributes.max_retries
     awsBatchRetryAttempts: runtime_attributes.max_retries  # !UnknownRuntimeKey
     zones: runtime_attributes.zones
+    cpuPlatform: runtime_attributes.cpuPlatform
   }
 }
 
@@ -297,13 +298,14 @@ task concat_pbsv_vcf {
   runtime {
     docker: "~{runtime_attributes.container_registry}/pb_wdl_base@sha256:4b889a1f21a6a7fecf18820613cf610103966a93218de772caba126ab70a8e87"
     cpu: threads
-    memory: mem_gb + " GB"
+    memory: mem_gb + " GiB"
     disk: disk_size + " GB"
     disks: "local-disk " + disk_size + " HDD"
     preemptible: runtime_attributes.preemptible_tries
     maxRetries: runtime_attributes.max_retries
     awsBatchRetryAttempts: runtime_attributes.max_retries  # !UnknownRuntimeKey
     zones: runtime_attributes.zones
+    cpuPlatform: runtime_attributes.cpuPlatform
   }
 }
 
@@ -328,6 +330,9 @@ task split_vcf_by_sample {
     split_vcf_index_names: {
       name: "Split VCF index names"
     }
+    exclude_uncalled: {
+      name: "Exclude uncalled genotypes (default: true)"
+    }
     runtime_attributes: {
       name: "Runtime attribute structure"
     }
@@ -347,6 +352,8 @@ task split_vcf_by_sample {
     Array[String] split_vcf_names
     Array[String] split_vcf_index_names
 
+    Boolean exclude_uncalled = true
+
     RuntimeAttributes runtime_attributes
   }
 
@@ -362,11 +369,11 @@ task split_vcf_by_sample {
     bcftools --version
 
     for sample_id in ~{sep=" " sample_ids}; do
-      # Extract sample, keeping only passing variants and excluding uncalled genotypes
+      # Extract sample, optionally excluding uncalled genotypes
       bcftools view \
         ~{if threads > 1 then "--threads " + (threads - 1) else ""} \
         --samples ${sample_id} \
-        --exclude-uncalled \
+        ~{true="--exclude-uncalled" false="" exclude_uncalled} \
         --output-type z \
         --output ${sample_id}.~{vcf_basename}.vcf.gz \
         ~{vcf}
@@ -386,13 +393,14 @@ task split_vcf_by_sample {
   runtime {
     docker: "~{runtime_attributes.container_registry}/pb_wdl_base@sha256:4b889a1f21a6a7fecf18820613cf610103966a93218de772caba126ab70a8e87"
     cpu: threads
-    memory: mem_gb + " GB"
+    memory: mem_gb + " GiB"
     disk: disk_size + " GB"
     disks: "local-disk " + disk_size + " HDD"
     preemptible: runtime_attributes.preemptible_tries
     maxRetries: runtime_attributes.max_retries
     awsBatchRetryAttempts: runtime_attributes.max_retries  # !UnknownRuntimeKey
     zones: runtime_attributes.zones
+    cpuPlatform: runtime_attributes.cpuPlatform
   }
 }
 
@@ -456,13 +464,14 @@ task bcftools_merge {
   runtime {
     docker: "~{runtime_attributes.container_registry}/pb_wdl_base@sha256:4b889a1f21a6a7fecf18820613cf610103966a93218de772caba126ab70a8e87"
     cpu: threads
-    memory: mem_gb + " GB"
+    memory: mem_gb + " GiB"
     disk: disk_size + " GB"
     disks: "local-disk " + disk_size + " HDD"
     preemptible: runtime_attributes.preemptible_tries
     maxRetries: runtime_attributes.max_retries
     awsBatchRetryAttempts: runtime_attributes.max_retries  # !UnknownRuntimeKey
     zones: runtime_attributes.zones
+    cpuPlatform: runtime_attributes.cpuPlatform
   }
 }
 
@@ -474,6 +483,9 @@ task sv_stats {
   parameter_meta {
     vcf: {
       name: "VCF"
+    }
+    min_length: {
+      name: "Minimum length"
     }
     runtime_attributes: {
       name: "Runtime attribute structure"
@@ -493,10 +505,16 @@ task sv_stats {
     stat_sv_BND_count: {
       name: "Number of breakends"
     }
+    stat_sv_SWAP_count: {
+      name: "Number of sequence swap variants greater than 49 bp"
+    }
   }
 
   input {
     File vcf
+
+    Int min_length = 50
+    Int max_scar_length = 10
 
     RuntimeAttributes runtime_attributes
   }
@@ -509,53 +527,61 @@ task sv_stats {
     # Count the number of variants of each type
     bcftools view \
       --no-header \
-      --include 'FILTER="PASS" & ABS(SVLEN)>49 & SVTYPE="DUP"' \
+      --include 'GT="alt" & FILTER="PASS" & ABS(SVLEN)>=~{min_length} & SVTYPE="DUP"' \
       "~{vcf}" \
     | wc --lines \
     > stat_DUP.txt || echo "0" > stat_DUP.txt
     bcftools view \
       --no-header \
-      --include 'FILTER="PASS" & ABS(SVLEN)>49 & SVTYPE="DEL"' \
+      --include 'GT="alt" & FILTER="PASS" & ABS(SVLEN)>=~{min_length} & SVTYPE="DEL" & STRLEN(ALT[0])<=~{max_scar_length}' \
       "~{vcf}" \
     | wc --lines \
     > stat_DEL.txt || echo "0" > stat_DEL.txt
     bcftools view \
       --no-header \
-      --include 'FILTER="PASS" & ABS(SVLEN)>49 & SVTYPE="INS"' \
+      --include 'GT="alt" & FILTER="PASS" & ABS(SVLEN)>=~{min_length} & SVTYPE="INS" & STRLEN(REF)<=~{max_scar_length}' \
       "~{vcf}" \
     | wc --lines \
     > stat_INS.txt || echo "0" > stat_INS.txt
     bcftools view \
       --no-header \
-      --include 'FILTER="PASS" & ABS(SVLEN)>49 & SVTYPE="INV"' \
+      --include 'GT="alt" & FILTER="PASS" & ABS(SVLEN)>=~{min_length} & (SVTYPE="INS" | SVTYPE="DEL") & STRLEN(REF)>~{max_scar_length} & STRLEN(ALT[0])>~{max_scar_length}' \
+      "~{vcf}" \
+    | wc --lines \
+    > stat_SWAP.txt || echo "0" > stat_SWAP.txt
+    bcftools view \
+      --no-header \
+      --include 'GT="alt" & FILTER="PASS" & SVTYPE="INV"' \
       "~{vcf}" \
     | wc --lines \
     > stat_INV.txt || echo "0" > stat_INV.txt
     bcftools view \
       --no-header \
-      --include 'FILTER="PASS" & SVTYPE="BND"' \
+      --include 'GT="alt" & FILTER="PASS" & SVTYPE="BND"' \
       "~{vcf}" \
     | wc --lines \
     > stat_BND.txt || echo "0" > stat_BND.txt
   >>>
 
   output {
-    String stat_sv_DUP_count = read_string("stat_DUP.txt")
-    String stat_sv_DEL_count = read_string("stat_DEL.txt")
-    String stat_sv_INS_count = read_string("stat_INS.txt")
-    String stat_sv_INV_count = read_string("stat_INV.txt")
-    String stat_sv_BND_count = read_string("stat_BND.txt")
+    String stat_sv_DUP_count  = read_string("stat_DUP.txt")
+    String stat_sv_DEL_count  = read_string("stat_DEL.txt")
+    String stat_sv_INS_count  = read_string("stat_INS.txt")
+    String stat_sv_INV_count  = read_string("stat_INV.txt")
+    String stat_sv_BND_count  = read_string("stat_BND.txt")
+    String stat_sv_SWAP_count = read_string("stat_SWAP.txt")
   }
 
   runtime {
     docker: "~{runtime_attributes.container_registry}/pb_wdl_base@sha256:4b889a1f21a6a7fecf18820613cf610103966a93218de772caba126ab70a8e87"
     cpu: threads
-    memory: mem_gb + " GB"
+    memory: mem_gb + " GiB"
     disk: disk_size + " GB"
     disks: "local-disk " + disk_size + " HDD"
     preemptible: runtime_attributes.preemptible_tries
     maxRetries: runtime_attributes.max_retries
     awsBatchRetryAttempts: runtime_attributes.max_retries  # !UnknownRuntimeKey
     zones: runtime_attributes.zones
+    cpuPlatform: runtime_attributes.cpuPlatform
   }
 }
