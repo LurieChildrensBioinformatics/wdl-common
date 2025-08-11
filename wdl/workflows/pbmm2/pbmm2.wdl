@@ -204,7 +204,7 @@ task split_input_bam {
   }
 
   runtime {
-    docker: "~{runtime_attributes.container_registry}/pbtk@sha256:67cd438ed9f343f90f058108170ddbff8fb1d9b5c193f4016be42b737ee2e73c"
+    docker: "~{runtime_attributes.container_registry}/pacbio/pbtk@sha256:67cd438ed9f343f90f058108170ddbff8fb1d9b5c193f4016be42b737ee2e73c"
     cpu: threads
     memory: mem_gb + " GiB"
     disk: disk_size + " GB"
